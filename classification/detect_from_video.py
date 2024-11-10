@@ -10,6 +10,8 @@ python detect_from_video.py
 
 Author: Andreas Rössler
 """
+# 수정된 코드에서 이미지 출력 부분
+import matplotlib.pyplot as plt
 import os
 import argparse
 from os.path import join
@@ -22,7 +24,7 @@ from tqdm import tqdm
 
 from network.models import model_selection
 from dataset.transform import xception_default_data_transforms
-
+from google.colab.patches import cv2_imshow
 
 def get_boundingbox(face, width, height, scale=1.3, minsize=None):
     """
@@ -118,15 +120,19 @@ def test_full_image_network(video_path, model_path, output_path,
     """
     print('Starting: {}'.format(video_path))
 
-    # Read and write
+    # Read video
     reader = cv2.VideoCapture(video_path)
 
-    video_fn = video_path.split('/')[-1].split('.')[0]+'.avi'
+    video_fn = video_path.split('/')[-1].split('.')[0] + '.avi'
     os.makedirs(output_path, exist_ok=True)
     fourcc = cv2.VideoWriter_fourcc(*'MJPG')
     fps = reader.get(cv2.CAP_PROP_FPS)
     num_frames = int(reader.get(cv2.CAP_PROP_FRAME_COUNT))
     writer = None
+
+    # Ensure start_frame and end_frame are within valid ranges
+    start_frame = max(0, min(start_frame, num_frames - 1))  # start_frame should be between 0 and num_frames-1
+    end_frame = min(num_frames, end_frame if end_frame is not None else num_frames)  # end_frame should not exceed num_frames
 
     # Face detector
     face_detector = dlib.get_frontal_face_detector()
@@ -148,9 +154,7 @@ def test_full_image_network(video_path, model_path, output_path,
 
     # Frame numbers and length of output video
     frame_num = 0
-    assert start_frame < num_frames - 1
-    end_frame = end_frame if end_frame else num_frames
-    pbar = tqdm(total=end_frame-start_frame)
+    pbar = tqdm(total=end_frame - start_frame)
 
     while reader.isOpened():
         _, image = reader.read()
@@ -160,6 +164,9 @@ def test_full_image_network(video_path, model_path, output_path,
 
         if frame_num < start_frame:
             continue
+        if frame_num >= end_frame:
+            break
+
         pbar.update(1)
 
         # Image size
@@ -180,7 +187,7 @@ def test_full_image_network(video_path, model_path, output_path,
             # --- Prediction ---------------------------------------------------
             # Face crop with dlib and bounding box scale enlargement
             x, y, size = get_boundingbox(face, width, height)
-            cropped_face = image[y:y+size, x:x+size]
+            cropped_face = image[y:y + size, x:x + size]
 
             # Actual prediction using our model
             prediction, output = predict_with_model(cropped_face, model,
@@ -196,25 +203,31 @@ def test_full_image_network(video_path, model_path, output_path,
             color = (0, 255, 0) if prediction == 0 else (0, 0, 255)
             output_list = ['{0:.2f}'.format(float(x)) for x in
                            output.detach().cpu().numpy()[0]]
-            cv2.putText(image, str(output_list)+'=>'+label, (x, y+h+30),
+            cv2.putText(image, str(output_list) + '=>' + label, (x, y + h + 30),
                         font_face, font_scale,
                         color, thickness, 2)
             # draw box over face
             cv2.rectangle(image, (x, y), (x + w, y + h), color, 2)
 
-        if frame_num >= end_frame:
-            break
+        # Show and write output
+        # OpenCV는 BGR 형식을 사용하므로, 이를 RGB로 변환
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        
+        # matplotlib로 이미지 출력
+        plt.imshow(image_rgb)
+        plt.axis('off')  # 축 숨기기
+        plt.show()
 
-        # Show
-        cv2.imshow('test', image)
-        cv2.waitKey(33)     # About 30 fps
+        # 비디오에 이미지를 기록하는 부분은 그대로 둡니다
         writer.write(image)
+
     pbar.close()
     if writer is not None:
         writer.release()
         print('Finished! Output saved under {}'.format(output_path))
     else:
         print('Input video file was empty')
+
 
 
 if __name__ == '__main__':
